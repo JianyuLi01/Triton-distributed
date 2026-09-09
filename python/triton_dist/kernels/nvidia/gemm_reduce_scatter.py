@@ -44,8 +44,12 @@ from triton_dist.nv_utils import get_intranode_max_speed_gbps
 
 ################### context ###################
 
-# fall back to cuBLAS + NCCL when overlap overhead > benefit
-_SMALL_GEMM_FLOPS_THRESHOLD = 1e11  # 100 GFLOPS
+# Fall back to cuBLAS + NCCL when overlap overhead > benefit. Overlapping can hide
+# at most min(gemm, reduce_scatter), so the decision has to be made in time, not in
+# FLOPs: an absolute FLOPs threshold silently disables overlap on machines where the
+# interconnect is slow relative to the compute (e.g. PCIe-only L20).
+# 0.1ms matches the previous 1e11 FLOPs threshold on H800, which it was tuned for.
+_MIN_HIDEABLE_TIME_MS = 0.1
 
 
 @dataclasses.dataclass
@@ -635,9 +639,12 @@ def gemm_rs_op(A: torch.Tensor, B: torch.Tensor, ctx: GEMMReduceScatterTensorPar
     assert M % world_size == 0
     M_per_rank = M // world_size
 
-    # fast path: cuBLAS + NCCL for small GEMMs where overlap overhead > benefit
-    gemm_flops = 2 * M * N * local_K
-    if (gemm_flops < _SMALL_GEMM_FLOPS_THRESHOLD and ctx.tp_group is not None and not reduce_st
+    # fast path: cuBLAS + NCCL when there is too little time to hide either way
+    gemm_time_ms = estimate_gemm_sol_time_ms(M, ctx.rs_ctx.N, local_K, A.dtype)
+    rs_time_ms = estimate_reduce_scatter_time_ms(M * ctx.rs_ctx.N * output_dtype.itemsize, world_size,
+                                                 local_world_size, get_intranode_max_speed_gbps(),
+                                                 get_nic_gbps_per_gpu())
+    if (min(gemm_time_ms, rs_time_ms) < _MIN_HIDEABLE_TIME_MS and ctx.tp_group is not None and not reduce_st
             and A.dtype.is_floating_point):
         output = torch.empty((M_per_rank, N), dtype=output_dtype, device=A.device)
         gemm_out = torch.matmul(A, B)

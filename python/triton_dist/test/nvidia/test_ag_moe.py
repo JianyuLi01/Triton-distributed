@@ -165,9 +165,9 @@ def perf_test(name, input_len, dtype: torch.dtype, config, pg: torch.distributed
     C_triton_non_overlap_persistent = run_moe_ag_triton_non_overlap(A, B, full_topk_ids, persistent=True)
     _, C_torch = torch_ag_group_gemm(pg, A, B, full_topk_ids)
     try:
-        assert_allclose(C_torch, C_triton, atol=1e-3, rtol=1e-3, verbose=False)
-        assert_allclose(C_torch, C_triton_non_overlap, atol=1e-3, rtol=1e-3, verbose=False)
-        assert_allclose(C_torch, C_triton_non_overlap_persistent, atol=1e-3, rtol=1e-3, verbose=False)
+        assert_allclose(C_torch, C_triton, atol=args.atol, rtol=args.rtol, verbose=False)
+        assert_allclose(C_torch, C_triton_non_overlap, atol=args.atol, rtol=args.rtol, verbose=False)
+        assert_allclose(C_torch, C_triton_non_overlap_persistent, atol=args.atol, rtol=args.rtol, verbose=False)
     except Exception as e:
         torch.save(C_torch, f"{name}_C_torch_{RANK}.pt")
         torch.save(C_triton, f"{name}_C_triton_{RANK}.pt")
@@ -244,6 +244,8 @@ if __name__ == "__main__":
     parser.add_argument("--iters", type=int, default=10)
     parser.add_argument("--warmup_iters", type=int, default=5)
     parser.add_argument("--dtype", type=str, default="float16", choices=["float16", "bfloat16"])
+    parser.add_argument("--atol", type=float, default=1e-3)
+    parser.add_argument("--rtol", type=float, default=1e-3)
     parser.add_argument("--debug", default=False, action="store_true")
     args = parser.parse_args()
 
